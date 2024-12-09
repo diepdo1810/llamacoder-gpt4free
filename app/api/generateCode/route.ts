@@ -1,62 +1,61 @@
+import { getModel } from "@/utils/model";
 import shadcnDocs from "@/utils/shadcn-docs";
 import dedent from "dedent";
-import Together from "together-ai";
+import { env } from "process";
 import { z } from "zod";
+import { streamText, convertToCoreMessages } from 'ai';
+import { MAX_TOKENS } from "@/utils/constants";
 
-let options: ConstructorParameters<typeof Together>[0] = {};
-if (process.env.HELICONE_API_KEY) {
-  options.baseURL = "https://together.helicone.ai/v1";
-  options.defaultHeaders = {
-    "Helicone-Auth": `Bearer ${process.env.HELICONE_API_KEY}`,
-    // "Helicone-Property-Local": "true",
-  };
-}
+export type StreamingOptions = Omit<Parameters<typeof streamText>[0], 'model'>;
 
-let together = new Together(options);
+// if (process.env.HELICONE_API_KEY) {
+//   options.baseURL = "https://together.helicone.ai/v1";
+//   options.defaultHeaders = {
+//     "Helicone-Auth": `Bearer ${process.env.HELICONE_API_KEY}`,
+//     // "Helicone-Property-Local": "true",
+//   };
+// }
 
 export async function POST(req: Request) {
-  let json = await req.json();
-  let result = z
-    .object({
-      model: z.string(),
-      shadcn: z.boolean().default(false),
-      messages: z.array(
-        z.object({
-          role: z.enum(["user", "assistant"]),
-          content: z.string(),
-        }),
-      ),
-    })
-    .safeParse(json);
+  let options: StreamingOptions = {};
 
-  if (result.error) {
-    return new Response(result.error.message, { status: 422 });
-  }
+  let { model, messages, shadcn, provider, apiKeys } = await req.json();
 
-  let { model, messages, shadcn } = result.data;
   let systemPrompt = getSystemPrompt(shadcn);
 
-  let res = await together.chat.completions.create({
-    model,
-    messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      ...messages.map((message) => ({
-        ...message,
-        content:
-          message.role === "user"
-            ? message.content +
-              "\nPlease ONLY return code, NO backticks or language names."
-            : message.content,
-      })),
-    ],
-    stream: true,
-    temperature: 0.2,
+  messages = convertToCoreMessages([
+    { role: "system", content: systemPrompt },
+    ...messages.map((message: { role: string; content: string; }) => ({
+      ...message,
+      content:
+        message.role === "user"
+          ? message.content +
+            "\nPlease ONLY return code, NO backticks or language names."
+          : message.content,
+    })),
+  ]);
+
+  console.log('messages', messages);
+  console.log('model', getModel(provider, model, apiKeys));
+
+  let response = await streamText({
+    model: getModel(provider, model, apiKeys) ,
+    maxTokens: MAX_TOKENS,
+    messages,
+    ...options,
   });
 
-  return new Response(res.toReadableStream());
+  // Create a new ReadableStream for the event stream response
+  const stream = new ReadableStream({
+    async pull(controller) {
+      for await (const textPart of response.textStream) {
+        controller.enqueue(textPart);
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream);
 }
 
 let examples = [
@@ -186,7 +185,7 @@ export default function HealthcareLandingPage() {
         </section>
       </main>
       <footer className="flex flex-col gap-2 sm:flex-row py-6 w-full shrink-0 items-center px-4 md:px-6 border-t">
-        <p className="text-xs text-gray-500 dark:text-gray-400">© 2023 HealthCare Co. All rights reserved.</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400"> 2023 HealthCare Co. All rights reserved.</p>
         <nav className="sm:ml-auto flex gap-4 sm:gap-6">
           <a className="text-xs hover:underline underline-offset-4" href="#">
             Terms of Service

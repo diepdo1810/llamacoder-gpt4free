@@ -16,6 +16,17 @@
 - Helicone for observability
 - Plausible for website analytics
 
+## Tasks
+
+- ✅ Multiple LLMs & Providers Added
+- ✅ Api Key Support through env and user input
+- ✅ Local LLMs (Ollama & LM Studio) Added
+- ⬜ Image Support
+- ⬜ Dark Mode
+- ⬜ Update the publish app
+- ⬜ More css libraries support
+- ⬜ More Features
+
 ## Cloning & running
 
 1. Clone the repo: `git clone https://github.com/Nutlope/llamacoder`

@@ -10,43 +10,42 @@ import * as Select from "@radix-ui/react-select";
 import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { AnimatePresence, motion } from "framer-motion";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { toast, Toaster } from "sonner";
-import { ChatCompletionStream } from "together-ai/lib/ChatCompletionStream.mjs";
 import LoadingDots from "../../components/loading-dots";
 import { shareApp } from "./actions";
+import { DEFAULT_LLM, DEFAULT_PROVIDER, llms, SHADCN } from "@/utils/llms";
+import { ModelInfo } from "@/utils/llms.type";
 
 export default function Home() {
   let [status, setStatus] = useState<
     "initial" | "creating" | "created" | "updating" | "updated"
   >("initial");
   let [prompt, setPrompt] = useState("");
-  let models = [
-    {
-      label: "Llama 3.1 405B",
-      value: "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
-    },
-    {
-      label: "Llama 3.3 70B",
-      value: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-    },
-    {
-      label: "Qwen 2.5 Coder 32B",
-      value: "Qwen/Qwen2.5-Coder-32B-Instruct",
-    },
-
-    {
-      label: "Gemma 2 27B",
-      value: "google/gemma-2-27b-it",
-    },
-  ];
-  let [model, setModel] = useState(models[0].value);
+  let [provider, setProvider] = useState(DEFAULT_PROVIDER);
+  let [model, setModel] = useState(DEFAULT_LLM);
+  let [apiKeys, setApiKeys] = useState({
+    OpenAI: "",
+    Anthropic: "",
+    Groq: "",
+    OpenRouter: "",
+    Google: "",
+    OpenAILike: "",
+    Deepseek: "",
+    Mistral: "",
+    LMStudio: "",
+    xAI: "",
+  });
+  let [apiKey, setApiKey] = useState("");
   let [shadcn, setShadcn] = useState(false);
   let [modification, setModification] = useState("");
   let [generatedCode, setGeneratedCode] = useState("");
+  let [providers, setProviders] = useState<ModelInfo[]>([]);
+  let [models, setModels] = useState<ModelInfo[]>([]);
   let [initialAppConfig, setInitialAppConfig] = useState({
-    model: "",
-    shadcn: true,
+    model: DEFAULT_LLM,
+    shadcn: SHADCN,
+    provider: DEFAULT_PROVIDER,
   });
   let [ref, scrollTo] = useScrollTo();
   let [messages, setMessages] = useState<{ role: string; content: string }[]>(
@@ -56,8 +55,49 @@ export default function Home() {
 
   let loading = status === "creating" || status === "updating";
 
+  useEffect(() => {
+    let uniqueProviders = new Set();
+    let filteredProviders: ModelInfo[] = llms.filter((provider) => {
+      if (!uniqueProviders.has(provider.provider)) {
+        uniqueProviders.add(provider.provider);
+        return true;
+      }
+      return false;
+    });
+
+    // console.log('filteredProviders', filteredProviders);
+    setProviders(filteredProviders);
+    filterModels(provider);
+  }, []);
+
+  useEffect(() => {
+    filterModels(provider);
+  }, [provider]);
+
+  useEffect(() => {
+    setModel(models[0]?.name ?? DEFAULT_LLM);
+  }, [models]);
+
+  function filterModels(provider: string) {
+    let uniqueModels = new Set();
+    let filteredModels: ModelInfo[] = llms.filter((model) => {
+      if (!uniqueModels.has(model.name) && model.provider === provider) {
+        uniqueModels.add(model.name);
+        return true;
+      }
+      return false;
+    });
+    // console.log('filteredModels', filteredModels);
+    setModels(filteredModels);
+    // console.log('main model', filteredModels[0]?.name ?? DEFAULT_LLM);
+  }
+
+  const codeBuffer = useRef(""); // Buffer to accumulate code
+  const updateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Ref for debounce timeout
+
   async function createApp(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    codeBuffer.current = "";
 
     if (status !== "initial") {
       scrollTo({ delay: 0.5 });
@@ -74,7 +114,9 @@ export default function Home() {
       body: JSON.stringify({
         model,
         shadcn,
+        apiKeys,
         messages: [{ role: "user", content: prompt }],
+        provider,
       }),
     });
 
@@ -86,16 +128,45 @@ export default function Home() {
       throw new Error("No response body");
     }
 
-    ChatCompletionStream.fromReadableStream(res.body)
-      .on("content", (delta) => setGeneratedCode((prev) => prev + delta))
-      .on("end", () => {
+    let reader = res.body.getReader();
+    let decoder = new TextDecoder();
+    let done = false;
+
+    while (!done) {
+      const { value, done: doneReading } = await reader.read();
+      if (doneReading) {
+        done = true;
         setMessages([{ role: "user", content: prompt }]);
-        setInitialAppConfig({ model, shadcn });
+        setInitialAppConfig({ model, shadcn, provider });
         setStatus("created");
-      });
+        break;
+      }
+
+      const chunkValue = decoder.decode(value);
+      codeBuffer.current += chunkValue; // Accumulate chunks
+
+      // Debounce the state update
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+
+      updateTimeoutRef.current = setTimeout(() => {
+        setGeneratedCode(codeBuffer.current); // Update state with accumulated code
+      }, 5); // Adjust the delay as needed
+    }
   }
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+    };
+  }, []);
+
   async function updateApp(e: FormEvent<HTMLFormElement>) {
+    codeBuffer.current = "";
     e.preventDefault();
 
     setStatus("updating");
@@ -112,8 +183,10 @@ export default function Home() {
       },
       body: JSON.stringify({
         messages: [...messages, codeMessage, modificationMessage],
-        model: initialAppConfig.model,
+        model: model,
         shadcn: initialAppConfig.shadcn,
+        apiKeys,
+        provider: provider,
       }),
     });
 
@@ -125,12 +198,31 @@ export default function Home() {
       throw new Error("No response body");
     }
 
-    ChatCompletionStream.fromReadableStream(res.body)
-      .on("content", (delta) => setGeneratedCode((prev) => prev + delta))
-      .on("end", () => {
+    let reader = res.body.getReader();
+    let decoder = new TextDecoder();
+    let done = false;
+
+    while (!done) {
+      const { value, done: doneReading } = await reader.read();
+      if (doneReading) {
+        done = true;
         setMessages((m) => [...m, codeMessage, modificationMessage]);
         setStatus("updated");
-      });
+        break;
+      }
+
+      const chunkValue = decoder.decode(value);
+      codeBuffer.current += chunkValue; // Accumulate chunks
+
+      // Debounce the state update
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+
+      updateTimeoutRef.current = setTimeout(() => {
+        setGeneratedCode(codeBuffer.current); // Update state with accumulated code
+      }, 5); // Adjust the delay as needed
+    }
   }
 
   useEffect(() => {
@@ -141,6 +233,15 @@ export default function Home() {
     }
   }, [loading, generatedCode]);
 
+  const appendApiKey = (key: string) => {
+    setApiKeys({
+      ...apiKeys,
+      [provider]: key,
+    });
+
+    setApiKey(key);
+  };
+
   return (
     <main className="mt-12 flex w-full flex-1 flex-col items-center px-4 text-center sm:mt-20">
       <a
@@ -149,7 +250,7 @@ export default function Home() {
         target="_blank"
       >
         <span className="text-center">
-          Powered by <span className="font-medium">Llama 3.1</span> and{" "}
+          Powered by <span className="font-medium">Llama</span> and{" "}
           <span className="font-medium">Together AI</span>
         </span>
       </a>
@@ -158,8 +259,11 @@ export default function Home() {
         <br /> into an <span className="text-blue-600">app</span>
       </h1>
 
-      <form className="w-full max-w-xl" onSubmit={createApp}>
-        <fieldset disabled={loading} className="disabled:opacity-75">
+      <form
+        className="mx-auto flex w-full max-w-xl flex-col items-center"
+        onSubmit={createApp}
+      >
+        <fieldset disabled={loading} className="w-full disabled:opacity-75">
           <div className="relative mt-5">
             <div className="absolute -inset-2 rounded-[32px] bg-gray-300/50" />
             <div className="relative flex rounded-3xl bg-white shadow-sm">
@@ -187,8 +291,49 @@ export default function Home() {
               </button>
             </div>
           </div>
-          <div className="mt-6 flex flex-col justify-center gap-4 sm:flex-row sm:items-center sm:gap-8">
-            <div className="flex items-center justify-between gap-3 sm:justify-center">
+          <div className="mt-6 flex w-full flex-col items-center justify-center gap-4 sm:flex-row sm:items-center sm:justify-center sm:gap-8">
+            <div className="flex items-center justify-center gap-3">
+              <p className="text-gray-500 sm:text-xs">Provider:</p>
+              <Select.Root
+                name="provider"
+                disabled={loading}
+                value={provider}
+                onValueChange={(value) => setProvider(value)}
+              >
+                <Select.Trigger className="group flex w-60 max-w-xs items-center rounded-2xl border-[6px] border-gray-300 bg-white px-4 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500">
+                  <Select.Value />
+                  <Select.Icon className="ml-auto">
+                    <ChevronDownIcon className="size-6 text-gray-300 group-focus-visible:text-gray-500 group-enabled:group-hover:text-gray-500" />
+                  </Select.Icon>
+                </Select.Trigger>
+                <Select.Portal>
+                  <Select.Content className="overflow-hidden rounded-md bg-white shadow-lg">
+                    <Select.Viewport className="p-2">
+                      {providers.map((model) => (
+                        <Select.Item
+                          key={model.provider}
+                          value={model.provider}
+                          className="flex cursor-pointer items-center rounded-md px-3 py-2 text-sm data-[highlighted]:bg-gray-100 data-[highlighted]:outline-none"
+                        >
+                          <Select.ItemText asChild>
+                            <span className="inline-flex items-center gap-2 text-gray-500">
+                              <div className="size-2 rounded-full bg-green-500" />
+                              {model.provider}
+                            </span>
+                          </Select.ItemText>
+                          <Select.ItemIndicator className="ml-auto">
+                            <CheckIcon className="size-5 text-blue-600" />
+                          </Select.ItemIndicator>
+                        </Select.Item>
+                      ))}
+                    </Select.Viewport>
+                    <Select.ScrollDownButton />
+                    <Select.Arrow />
+                  </Select.Content>
+                </Select.Portal>
+              </Select.Root>
+            </div>
+            <div className="flex items-center justify-center gap-3">
               <p className="text-gray-500 sm:text-xs">Model:</p>
               <Select.Root
                 name="model"
@@ -207,8 +352,8 @@ export default function Home() {
                     <Select.Viewport className="p-2">
                       {models.map((model) => (
                         <Select.Item
-                          key={model.value}
-                          value={model.value}
+                          key={model.name}
+                          value={model.name}
                           className="flex cursor-pointer items-center rounded-md px-3 py-2 text-sm data-[highlighted]:bg-gray-100 data-[highlighted]:outline-none"
                         >
                           <Select.ItemText asChild>
@@ -230,7 +375,18 @@ export default function Home() {
               </Select.Root>
             </div>
 
-            <div className="flex h-full items-center justify-between gap-3 sm:justify-center">
+            <div className="flex items-center justify-center gap-3">
+              <p className="text-gray-500 sm:text-xs">API Key:</p>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => appendApiKey(e.target.value)}
+                className="group flex w-60 max-w-xs items-center rounded-2xl border-[6px] border-gray-300 bg-white px-4 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+                placeholder="Enter API key"
+              />
+            </div>
+
+            <div className="flex h-full items-center justify-between gap-3">
               <label className="text-gray-500 sm:text-xs" htmlFor="shadcn">
                 shadcn/ui:
               </label>
@@ -312,7 +468,7 @@ export default function Home() {
                           shareApp({
                             generatedCode,
                             prompt,
-                            model: initialAppConfig.model,
+                            model: model,
                           }),
                           1000,
                         );
