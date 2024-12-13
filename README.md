@@ -1,4 +1,4 @@
-<a href="https://www.llamacoder.io">
+<a href="https://youtu.be/YtPInwMw5Hc">
   <img alt="Llama Coder" src="./public/og-image.png">
   <h1 align="center">Llama Coder Any LLM</h1>
 </a>
@@ -21,7 +21,7 @@
 - ✅ Multiple LLMs & Providers Added
 - ✅ Api Key Support through env and user input
 - ✅ Local LLMs (Ollama & LM Studio) Added
-- ⬜ Image Support
+- ✅ Image Support
 - ⬜ Dark Mode
 - ⬜ Improve Error Handling
 - ⬜ Update the publish app

@@ -4,8 +4,14 @@ import CodeViewer from "@/components/code-viewer";
 import { useScrollTo } from "@/hooks/use-scroll-to";
 import { domain } from "@/utils/domain";
 import { CheckIcon } from "@heroicons/react/16/solid";
-import { ArrowLongRightIcon, ChevronDownIcon } from "@heroicons/react/20/solid";
+import {
+  ArrowLongRightIcon,
+  ChevronDownIcon,
+  PhotoIcon,
+  XMarkIcon,
+} from "@heroicons/react/20/solid";
 import { ArrowUpOnSquareIcon } from "@heroicons/react/24/outline";
+import imageLogo from "@/public/image.svg";
 import * as Select from "@radix-ui/react-select";
 import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
@@ -14,7 +20,13 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { toast, Toaster } from "sonner";
 import LoadingDots from "../../components/loading-dots";
 import { shareApp } from "./actions";
-import { DEFAULT_LLM, DEFAULT_PROVIDER, llms, SHADCN } from "@/utils/llms";
+import {
+  DEFAULT_LLM,
+  DEFAULT_PROVIDER,
+  llms,
+  SHADCN,
+  getModelList,
+} from "@/utils/llms";
 import { ModelInfo } from "@/utils/llms.type";
 
 export default function Home() {
@@ -22,8 +34,15 @@ export default function Home() {
     "initial" | "creating" | "created" | "updating" | "updated"
   >("initial");
   let [prompt, setPrompt] = useState("");
-  let [provider, setProvider] = useState(DEFAULT_PROVIDER);
-  let [model, setModel] = useState(DEFAULT_LLM);
+  let [provider, setProvider] = useState(
+    localStorage.getItem("selectedProvider") ?? DEFAULT_LLM.provider,
+  );
+  console.log('pprovider', provider);
+  let [model, setModel] = useState(
+    localStorage.getItem("selectedModel") ?? DEFAULT_LLM.name,
+  );
+  console.log('mmodel', model);
+  let [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null);
   let [apiKeys, setApiKeys] = useState({
     OpenAI: "",
     Anthropic: "",
@@ -35,6 +54,10 @@ export default function Home() {
     Mistral: "",
     LMStudio: "",
     xAI: "",
+    Together: "",
+    HuggingFace: "",
+    Ollama: "",
+    Cohere: "",
   });
   let [apiKey, setApiKey] = useState("");
   let [shadcn, setShadcn] = useState(false);
@@ -42,22 +65,57 @@ export default function Home() {
   let [generatedCode, setGeneratedCode] = useState("");
   let [providers, setProviders] = useState<ModelInfo[]>([]);
   let [models, setModels] = useState<ModelInfo[]>([]);
+  let [modelList, setModelList] = useState<ModelInfo[]>([]);
   let [initialAppConfig, setInitialAppConfig] = useState({
-    model: DEFAULT_LLM,
+    model: DEFAULT_LLM.name,
     shadcn: SHADCN,
-    provider: DEFAULT_PROVIDER,
+    provider: DEFAULT_PROVIDER.name,
   });
   let [ref, scrollTo] = useScrollTo();
   let [messages, setMessages] = useState<{ role: string; content: string }[]>(
     [],
   );
   let [isPublishing, setIsPublishing] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<{
+    name: string;
+    url: string;
+    contentType: string;
+  } | null>(null);
 
   let loading = status === "creating" || status === "updating";
 
   useEffect(() => {
+    filterModels(provider);
+  }, [provider]);
+
+  useEffect(() => {
+    if(!models.length){
+      return;
+    }
+    console.log("selectedModel", model);
+    console.log("models", models);
+    let modelAvail = models.find((m) => m.name === model);
+    console.log("modelAvail", modelAvail);
+    if (modelAvail) {
+      setSelectedModel(modelAvail);
+      setModel(modelAvail.name);
+    } else {
+      setModel(models[0]?.name ?? DEFAULT_LLM.name);
+      setSelectedModel(models[0] ?? DEFAULT_LLM);
+    }
+  }, [models]);
+
+  useEffect(() => {
+    if (!selectedModel?.imageSupport) {
+      setImageFile(null);
+      setImageUrl(null);
+    }
+  }, [selectedModel]);
+
+  useEffect(() => {
     let uniqueProviders = new Set();
-    let filteredProviders: ModelInfo[] = llms.filter((provider) => {
+    let filteredProviders: ModelInfo[] = modelList.filter((provider) => {
       if (!uniqueProviders.has(provider.provider)) {
         uniqueProviders.add(provider.provider);
         return true;
@@ -68,19 +126,22 @@ export default function Home() {
     // console.log('filteredProviders', filteredProviders);
     setProviders(filteredProviders);
     filterModels(provider);
+  }, [modelList]);
+
+  useEffect(() => {
+    getModelList({}).then((modelList) => {
+      console.log("modelList", modelList);
+      setModelList(modelList);
+    });
   }, []);
 
-  useEffect(() => {
-    filterModels(provider);
-  }, [provider]);
-
-  useEffect(() => {
-    setModel(models[0]?.name ?? DEFAULT_LLM);
-  }, [models]);
+  const getModelObj = (model: string) => {
+    return modelList.find((m) => m.name === model) ?? DEFAULT_LLM;
+  };
 
   function filterModels(provider: string) {
     let uniqueModels = new Set();
-    let filteredModels: ModelInfo[] = llms.filter((model) => {
+    let filteredModels: ModelInfo[] = modelList.filter((model) => {
       if (!uniqueModels.has(model.name) && model.provider === provider) {
         uniqueModels.add(model.name);
         return true;
@@ -94,6 +155,23 @@ export default function Home() {
 
   const codeBuffer = useRef(""); // Buffer to accumulate code
   const updateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Ref for debounce timeout
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImageUrl(reader.result as string);
+        setImageFile({
+          name: file.name,
+          url: reader.result as string,
+          contentType: file.type,
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   async function createApp(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -117,6 +195,7 @@ export default function Home() {
         apiKeys,
         messages: [{ role: "user", content: prompt }],
         provider,
+        imageFile,
       }),
     });
 
@@ -151,7 +230,8 @@ export default function Home() {
       }
 
       updateTimeoutRef.current = setTimeout(() => {
-        setGeneratedCode(codeBuffer.current); // Update state with accumulated code
+        let code = parseCode(codeBuffer.current);
+        setGeneratedCode(code); // Update state with accumulated code
       }, 5); // Adjust the delay as needed
     }
   }
@@ -186,7 +266,8 @@ export default function Home() {
         model: model,
         shadcn: initialAppConfig.shadcn,
         apiKeys,
-        provider: provider,
+        provider,
+        imageFile,
       }),
     });
 
@@ -220,7 +301,8 @@ export default function Home() {
       }
 
       updateTimeoutRef.current = setTimeout(() => {
-        setGeneratedCode(codeBuffer.current); // Update state with accumulated code
+        let code = parseCode(codeBuffer.current);
+        setGeneratedCode(code); // Update state with accumulated code
       }, 5); // Adjust the delay as needed
     }
   }
@@ -233,6 +315,22 @@ export default function Home() {
     }
   }, [loading, generatedCode]);
 
+  const parseCode = (text: string): string => {
+    const patterns = [
+      // @ts-ignore
+      /```(javascript|typescript|googlescript|js|ts|gs|html|json)/gs,
+      // @ts-ignore
+      /(```)$/gm,
+    ];
+
+    let newCode = text.replace(patterns[0], "").replace(patterns[1], "");
+
+    newCode = newCode.trim();
+
+    // If no matches were found, return the whole input as a single-element array
+    return newCode;
+  };
+
   const appendApiKey = (key: string) => {
     setApiKeys({
       ...apiKeys,
@@ -244,7 +342,7 @@ export default function Home() {
 
   return (
     <main className="mt-12 flex w-full flex-1 flex-col items-center px-4 text-center sm:mt-20">
-      <a
+      {/* <a
         className="mb-4 inline-flex h-7 shrink-0 items-center gap-[9px] rounded-[50px] border-[0.5px] border-solid border-[#E6E6E6] bg-[rgba(234,238,255,0.65)] bg-gray-100 px-7 py-5 shadow-[0px_1px_1px_0px_rgba(0,0,0,0.25)]"
         href="https://dub.sh/together-ai/?utm_source=example-app&utm_medium=llamacoder&utm_campaign=llamacoder-app-signup"
         target="_blank"
@@ -253,7 +351,7 @@ export default function Home() {
           Powered by <span className="font-medium">Llama</span> and{" "}
           <span className="font-medium">Together AI</span>
         </span>
-      </a>
+      </a> */}
       <h1 className="my-6 max-w-3xl text-4xl font-bold text-gray-800 sm:text-6xl">
         Turn your <span className="text-blue-600">idea</span>
         <br /> into an <span className="text-blue-600">app</span>
@@ -268,16 +366,65 @@ export default function Home() {
             <div className="absolute -inset-2 rounded-[32px] bg-gray-300/50" />
             <div className="relative flex rounded-3xl bg-white shadow-sm">
               <div className="relative flex flex-grow items-stretch focus-within:z-10">
+                {imageUrl && (
+                  <div className="relative flex items-center justify-center rounded-md p-4">
+                    <div className="relative">
+                      <img
+                        src={imageUrl}
+                        alt="Uploaded preview"
+                        className="h-24 w-24 rounded object-cover shadow"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImageUrl(null);
+                          setImageFile(null);
+                        }}
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-white text-gray-800 shadow hover:bg-red-500 hover:text-white"
+                      >
+                        <XMarkIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <textarea
                   rows={3}
                   required
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={(e: any) => {
+                    // submit the form on enter
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      createApp(e);
+                    }
+                  }}
                   name="prompt"
                   className="w-full resize-none rounded-l-3xl bg-transparent px-6 py-5 text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
                   placeholder="Build me a calculator app..."
                 />
               </div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                ref={fileInputRef}
+                style={{ display: "none", visibility: "hidden" }}
+              />
+              {selectedModel?.imageSupport && (
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => fileInputRef?.current?.click()}
+                  className="relative -ml-px inline-flex items-center gap-x-1.5 rounded-r-3xl px-3 py-2 text-sm font-semibold text-blue-500 hover:text-blue-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:text-gray-900"
+                >
+                  {status === "creating" ? (
+                    <LoadingDots color="black" style="large" />
+                  ) : (
+                    <PhotoIcon className="-ml-0.5 size-6" />
+                  )}
+                </button>
+              )}
               <button
                 type="submit"
                 disabled={loading}
@@ -298,7 +445,10 @@ export default function Home() {
                 name="provider"
                 disabled={loading}
                 value={provider}
-                onValueChange={(value) => setProvider(value)}
+                onValueChange={(value) => {
+                  setProvider(value);
+                  localStorage.setItem("selectedProvider", value);
+                }}
               >
                 <Select.Trigger className="group flex w-60 max-w-xs items-center rounded-2xl border-[6px] border-gray-300 bg-white px-4 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500">
                   <Select.Value />
@@ -339,7 +489,15 @@ export default function Home() {
                 name="model"
                 disabled={loading}
                 value={model}
-                onValueChange={(value) => setModel(value)}
+                onValueChange={(value) => {
+                  console.log("model", value);
+                  if (value.trim() !== "") {
+                    setModel(value);
+                    let modelObj = getModelObj(value);
+                    setSelectedModel(modelObj);
+                    localStorage.setItem("selectedModel", value);
+                  }
+                }}
               >
                 <Select.Trigger className="group flex w-60 max-w-xs items-center rounded-2xl border-[6px] border-gray-300 bg-white px-4 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500">
                   <Select.Value />
@@ -375,7 +533,7 @@ export default function Home() {
               </Select.Root>
             </div>
 
-            <div className="flex items-center justify-center gap-3">
+            {/* <div className="flex items-center justify-center gap-3">
               <p className="text-gray-500 sm:text-xs">API Key:</p>
               <input
                 type="password"
@@ -384,7 +542,7 @@ export default function Home() {
                 className="group flex w-60 max-w-xs items-center rounded-2xl border-[6px] border-gray-300 bg-white px-4 py-2 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
                 placeholder="Enter API key"
               />
-            </div>
+            </div> */}
 
             <div className="flex h-full items-center justify-between gap-3">
               <label className="text-gray-500 sm:text-xs" htmlFor="shadcn">
@@ -430,6 +588,13 @@ export default function Home() {
                         name="modification"
                         value={modification}
                         onChange={(e) => setModification(e.target.value)}
+                        onKeyDown={(e: any) => {
+                          // submit the form on enter
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            updateApp(e);
+                          }
+                        }}
                         className="w-full rounded-l-3xl bg-transparent px-6 py-5 text-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:cursor-not-allowed"
                         placeholder="Make changes to your app here"
                       />

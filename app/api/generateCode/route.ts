@@ -1,62 +1,63 @@
 import { getModel } from "@/utils/model";
 import shadcnDocs from "@/utils/shadcn-docs";
 import dedent from "dedent";
-import { env } from "process";
-import { z } from "zod";
-import { streamText, convertToCoreMessages } from 'ai';
+import { streamText } from "ai"; // Make sure this import is correct
 import { MAX_TOKENS } from "@/utils/constants";
 
-export type StreamingOptions = Omit<Parameters<typeof streamText>[0], 'model'>;
-
-// if (process.env.HELICONE_API_KEY) {
-//   options.baseURL = "https://together.helicone.ai/v1";
-//   options.defaultHeaders = {
-//     "Helicone-Auth": `Bearer ${process.env.HELICONE_API_KEY}`,
-//     // "Helicone-Property-Local": "true",
-//   };
-// }
+export type StreamingOptions = Omit<Parameters<typeof streamText>[0], "model">;
 
 export async function POST(req: Request) {
   let options: StreamingOptions = {};
 
-  let { model, messages, shadcn, provider, apiKeys } = await req.json();
+  let { model, messages, shadcn, provider, apiKeys, imageFile } = await req.json();
 
   let systemPrompt = getSystemPrompt(shadcn);
 
-  messages = convertToCoreMessages([
+  // Correctly format messages for the AI library
+  const formattedMessages = [
     { role: "system", content: systemPrompt },
-    ...messages.map((message: { role: string; content: string; }) => ({
-      ...message,
-      content:
-        message.role === "user"
-          ? message.content +
-            "\nPlease ONLY return code, NO backticks or language names."
-          : message.content,
-    })),
-  ]);
-
-  console.log('messages', messages);
-  console.log('model', getModel(provider, model, apiKeys));
-
-  let response = await streamText({
-    model: getModel(provider, model, apiKeys) ,
-    maxTokens: MAX_TOKENS,
-    messages,
-    ...options,
-  });
-
-  // Create a new ReadableStream for the event stream response
-  const stream = new ReadableStream({
-    async pull(controller) {
-      for await (const textPart of response.textStream) {
-        controller.enqueue(textPart);
+    ...messages.map((message: { role: string; content: any }, index: number) => {
+      let content = message.content;
+      if (index === 0 && imageFile) {
+        content = [
+          { type: "text", text: message.content + "\nPlease ONLY return code, NO backticks or language names." },
+          { type: "image", image: imageFile.url, mime_type: imageFile.contentType }, // Correct image format
+        ];
+      } else if (message.role === "user") {
+        content = message.content + "\nPlease ONLY return code, NO backticks or language names.";
       }
-      controller.close();
-    },
-  });
+      return { role: message.role, content };
+    }),
+  ];
 
-  return new Response(stream);
+  console.log("messages", formattedMessages);
+  console.log("model", getModel(provider, model, apiKeys));
+
+  try {
+    let response = await streamText({
+      model: getModel(provider, model, apiKeys),
+      maxTokens: MAX_TOKENS,
+      messages: formattedMessages, // Use the formatted messages
+      ...options,
+    });
+
+    const stream = new ReadableStream({
+      async pull(controller) {
+        for await (const textPart of response.textStream) {
+          controller.enqueue(textPart);
+        }
+        controller.close();
+      },
+    });
+
+    return new Response(stream);
+  } catch (error) {
+      console.error("Error during streamText:", error);
+      return new Response(JSON.stringify({ error: error }), { status: 500 }); // Return error response
+  }
 }
+
+// ... (rest of the code: getSystemPrompt, examples, etc.)
 
 let examples = [
   {
@@ -216,6 +217,7 @@ function getSystemPrompt(shadcn: boolean) {
     - Please ONLY return the full React code starting with the imports, nothing else. It's very important for my job that you only return the React code with imports. DO NOT START WITH \`\`\`typescript or \`\`\`javascript or \`\`\`tsx or \`\`\`.
     - ONLY IF the user asks for a dashboard, graph or chart, the recharts library is available to be imported, e.g. \`import { LineChart, XAxis, ... } from "recharts"\` & \`<LineChart ...><XAxis dataKey="name"> ...\`. Please only use this when needed.
     - For placeholder images, please use a <div className="bg-gray-200 border-2 border-dashed rounded-xl w-16 h-16" />
+    - If Image is provided, then use that image to create the UI and styling of the app.
   `;
 
   // - The lucide-react library is also available to be imported IF NECCESARY ONLY FOR THE FOLLOWING ICONS: Heart, Shield, Clock, Users, Play, Home, Search, Menu, User, Settings, Mail, Bell, Calendar, Clock, Heart, Star, Upload, Download, Trash, Edit, Plus, Minus, Check, X, ArrowRight.
