@@ -33,14 +33,23 @@ export default function Home() {
     "initial" | "creating" | "created" | "updating" | "updated"
   >("initial");
   let [prompt, setPrompt] = useState("");
-  let [provider, setProvider] = useState(
-    localStorage.getItem("selectedProvider") ?? DEFAULT_LLM.provider,
-  );
-  console.log('pprovider', provider);
-  let [model, setModel] = useState(
-    localStorage.getItem("selectedModel") ?? DEFAULT_LLM.name,
-  );
-  console.log('mmodel', model);
+  let [provider, setProvider] = useState(DEFAULT_LLM.provider);
+
+  let [model, setModel] = useState(DEFAULT_LLM.name);
+
+  useEffect(() => {
+    const storedProvider = localStorage.getItem("selectedProvider");
+    const storedModel = localStorage.getItem("selectedModel");
+
+    if (storedProvider) {
+      setProvider(storedProvider);
+    }
+
+    if (storedModel) {
+      setModel(storedModel);
+    }
+  }, []);
+
   let [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null);
   let [apiKeys, setApiKeys] = useState({
     OpenAI: "",

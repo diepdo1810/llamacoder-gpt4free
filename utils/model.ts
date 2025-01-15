@@ -47,6 +47,14 @@ export function getOpenAIModel(apiKey: OptionalApiKey, model: string) {
   return openai(model);
 }
 
+export function getOpenAIModelGpt4free(model: string, baseURL: string) {
+  const openai = createOpenAI({
+    baseURL,
+  });
+
+  return openai(model);
+}
+
 export function getMistralModel(apiKey: OptionalApiKey, model: string) {
   const mistral = createMistral({
     apiKey,
@@ -144,6 +152,8 @@ export function getModel(
       return getAnthropicModel(apiKey, model);
     case 'OpenAI':
       return getOpenAIModel(apiKey, model);
+    case 'Pollinations':
+      return getOpenAIModelGpt4free(model, 'https://text.pollinations.ai/openai');
     case 'Groq':
       return getGroqModel(apiKey, model);
     case 'HuggingFace':

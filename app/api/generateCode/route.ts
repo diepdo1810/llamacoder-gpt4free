@@ -1,7 +1,7 @@
 import { getModel } from "@/utils/model";
 import shadcnDocs from "@/utils/shadcn-docs";
 import dedent from "dedent";
-import { streamText } from "ai"; // Make sure this import is correct
+import { streamText } from "ai";
 import { MAX_TOKENS } from "@/utils/constants";
 
 export type StreamingOptions = Omit<Parameters<typeof streamText>[0], "model">;

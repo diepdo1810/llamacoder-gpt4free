@@ -338,6 +338,11 @@ const llms: ProviderInfo[] = [
     ],
     getApiKeyLink: 'https://api.together.xyz/settings/api-keys',
   },
+  {
+    name: 'Pollinations',
+    getDynamicModels: getPollinationsModels,
+    staticModels: [],
+  }
 ];
 
 export const DEFAULT_PROVIDER = llms[0];
@@ -400,6 +405,27 @@ async function getTogetherModels(apiKeys?: Record<string, string>, settings?: IP
     }));
   } catch (e) {
     console.error('Error getting OpenAILike models:', e);
+    return [];
+  }
+}
+
+async function getPollinationsModels(): Promise<ModelInfo[]> {
+  try {
+    const baseUrl = process.env.POLLINATIONS_API_BASE_URL || 'https://text.pollinations.ai';
+
+    const response = await fetch(`${baseUrl}/models`);
+    const data = (await response.json()) as any;
+
+    console.log("DATA", data);
+
+    return data.map((model: any) => ({
+      name: model.name,
+      label: model.description,
+      provider: 'Pollinations',
+      maxTokenAllowed: 8000,
+    }));
+  } catch (e) {
+    console.error('Error getting Pollinations models:', e);
     return [];
   }
 }
